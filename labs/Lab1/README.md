@@ -40,6 +40,7 @@ Linux: ```./configure --disable-kvm --disable-werror [--prefix=PFX] [--target-li
 6.828使用 [QEMU 模拟器](https://www.qemu.org/)，并配合 [GDB](http://www.gnu.org/software/gdb/) 进行Debug（QEMU内置调试功能不完善），下面的实验就马上用到GDB来研究开机流程
 
 首先来编译前面git clone下来的jos（现在还只是模板）。输入```make```会编译产生最简版本的jos引导加载程序 以及 jos内核。如果出现错误```undefined reference to `__udivdi3'```, 是因为没有 32位的gcc multilib, ```sudo apt-get install gcc-multilib```可破
+
 > 回忆一下开机流程：BIOS启动后，从MBR里抽取出引导加载程序(boot loader) 然后boot loader载入内核程序开始运行操作系统；boot loader 也可以放在其他存储设备的 boot section 内，由MBR转向它来实现多系统启动的功能
 
 make生成的```kernel.img```就是一块虚拟硬盘，包含了boot loader和kernel(可以假设boot loader放在kernel.img的boot section内)
@@ -49,10 +50,39 @@ make生成的```kernel.img```就是一块虚拟硬盘，包含了boot loader和k
 **注意**：使用make qemu会导致VGA和命令行同时输出；同样的，make qemu也会同时接受VGA和命令行的输入；使用 ```make qemu-nox```甚至不会有VGA输出，便于ssh连接。退出qemu使用 ```ctrl+a x```
 
 然后jos就跑起来了(有时快乐就是这么简单)，注意点击屏幕会失去鼠标控制，```Ctrl+Alt```可以恢复。截图留念：
-![](1.png)
+![](jos_boot.png)
 
 'Booting from Hard Disk...' 之后的内容就是 JOS内核 (前面可看作BIOS)；K> 是个提示符，由kernel的```monitor```模块产生。现在只有两个指令：```help``` 和 ```kerninfo```
 
 ## PC的物理地址空间
 
-来，又要来学习PC启动流程了。当然在实验中，JOS采用的是32位寻址空间（4GB），而到8102年比较多见的是64位（很多很多GB,多到用不完），所以做实验的过程中也应思考一下32位和64位的运行会不会有区别。
+此处来研究一下PC启动和物理地址空间的关系。该图是32位的
+
+> 和物理地址空间相对应的是逻辑地址空间，现在概念还比较朦胧
+
+![](physical_address_space.png)
+
+- 8088 处理器只能处理 1MB 物理地址，因此早期PC只能使用 Low Memory 部分作为 RAM；
+- 早期PC 将 BIOS 存放在 BIOS ROM 中，而现在是存放在 updatable flash memory 中；BIOS负责设备初始化并从存储设备中导入boot loader进行开机程序
+- 80286-16MB; 80386-4GB; 但**仍保留低地址的架构以向下兼容**。因此现在PC的物理地址空间被分割为两部分：low memory (头640KB) 和 extended memory (>1MB部分) 
+- 32-bit 机器在RAM之后（也即地址的最末端）还由BIOS分配了一些空间给 PCI设备（百度了一下类似于扩展内存槽的东西）
+- x86 处理器现在又能支持高于4GB的物理地址空间，因此RAM会被分割为三块
+- **JOS只使用PC物理地址空间的 头256MB**，因此实验只讨论32位地址空间
+
+## 探究 ROM BIOS
+
+在这一部分，我们将使用 QEMU 的调试设备探究 兼容 ```IA-32``` 的PC是如何启动的。
+
+启动两个终端并cd到jos目录。在一个终端输入```make qemu-gdb```(或者```make qemu-nox-gdb```)，于是 QEMU 启动并开始等待GDB的连接；在另一个终端，输入```make gdb```
+
+> 在make gdb这一步骤可能会有小错误，但我没遇到就没记录下来，可以在[原文件](https://pdos.csail.mit.edu/6.828/2018/labs/lab1/)对应部分查看
+
+首先可以看到第一条输出:
+```
+[f000:fff0]    0xffff0:	ljmp   $0xf000,$0xe05b
+```
+
+> 由于对x86汇编知识的缺乏，这一部分暂且跳过。后面的内容就是使用gdb的 ```si```(step) 指令一步一步地追踪BIOS的运作过程；这一篇文章说的比较详细，日后可以参考：[博客](http://www.cnblogs.com/fatsheep9146/p/5078179.html)
+
+# Part2：The Boot Loader 引导加载程序
+
